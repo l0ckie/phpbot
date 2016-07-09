@@ -1,0 +1,488 @@
+<?php
+echo 'started';
+error_reporting(E_ALL);
+set_time_limit(0);
+date_default_timezone_set('America/Chicago');
+
+$bot = new XatBot();
+while (true) {
+    try {
+        if ($bot->read() == 'DIED') {
+            $bot->disconnect();
+            $bot->join();
+        }
+    } catch (Exception $e) {
+        die($e);
+    }
+}
+class XatBot
+{
+    public $BotRegname = 'regname';
+    public $BotID = 'botid';
+    public $BotPassword = ''; /// $$ password
+    public $roomID = 'chatid';
+    public $soc;
+    public $packet;
+    public $users;
+    public $done = false;
+
+    public function loadSettings()
+    {
+        $this->botInfo = array(
+            'name' => 'bot',
+            'avatar' => 1,
+            'home' => '',
+        );
+    }
+    public function disconnect()
+    {
+        if (isset($this->soc) && $this->soc == true) {
+            socket_close($this->soc);
+        }
+        $this->soc = false;
+    }
+    public $ip = 'fwdelb02-53956973.us-east-1.elb.amazonaws.com';
+    public function connect($ip = 'xat.com', $port = 10008)
+    {
+        if (empty($this->BotRegname) || empty($this->BotPassword)) {
+            die("You must enter your bot's username and password.\n");
+        }
+        $error = false;
+        do {
+            try {
+                $this->soc = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+                socket_set_option($this->soc, SOL_SOCKET, SO_RCVTIMEO, array('sec' => 1000, 'usec' => 0));
+                if (!$this->soc) {
+                    die(socket_strerror(socket_last_error($this->soc)));
+                }
+                if (!socket_connect($this->soc, $this->ip, $port)) {
+                    echo "Connecting to ['".$this->ip."':'".$port."'] -> Failed to connect, reconnecting.\n";
+                    $this->connect($this->ip, $port);
+                    $this->reconnected = true;
+                }
+                echo "Connecting to ['".$this->ip."':'".$port."'] -> Connected\n";
+            } catch (Exception $e) {
+                $error = true;
+            }
+        } while ($error);
+    }
+    public function login($user, $pass)
+    {
+        $p = fsockopen($this->ip, 10000, $e, $e, 1);
+        stream_set_timeout($p, 2);
+        $packet = '<y r="8" v="0" u="'.$this->BotID.'" />';
+        fwrite($p, $packet.chr(0));
+        $x = trim(fread($p, 1024));
+		echo "[SEND] $packet\n[RECV] $x\n";
+        $packet = '<v p="'.$pass.'" n="'.$user.'" />';
+        fwrite($p, $packet.chr(0));
+        $x = trim(fread($p, 1024));
+		echo "[SEND] $packet\n";
+        $this->parse($x);
+        $this->loginInfo = $this->packet['v'];
+        if (count($this->loginInfo) <= 4) {
+            return false;
+        }
+
+        return $this->loginInfo;
+    }
+    public function parseU($id)
+    {
+        if (strpos($id, '_') > -1) {
+            $e = explode('_', $id);
+        }
+        $u = (strpos($id, '_') > -1) ? $e[0] : $id;
+
+        return $u;
+    }
+    public function join($room = false)
+    {
+        if ($this->soc == false) {
+            $this->connect();
+            $this->loggedIn = $this->login($this->BotRegname, $this->BotPassword);
+        }
+        $this->loadSettings();
+        unset($this->packet['y']);
+        $this->send('<y r="'.$this->roomID.'" m="1" v="0" u="'.$this->BotID.'" />');
+        while (!@is_array(@$this->packet['y'])) {
+            $this->read();
+        }
+        if ($this->loggedIn != false) {
+            $i = $this->loginInfo;
+            $this->userID = $i['i'];
+            $j2 = '';
+            $j2 .= 'cb="'.time().'" ';
+            $j2 .= 'q="1" ';
+            $j2 .= 'y="'.$this->packet['y']['i'].'" ';
+            $j2 .= 'k="'.$i['k1'].'" ';
+            $j2 .= 'k3="'.$i['k3'].'" ';
+            if (isset($i['d1'])) {
+                $j2 .= 'd1="'.$i['d1'].'" ';
+            } else {
+                $i['di'] = '';
+            }
+            $j2 .= 'p="0" ';
+            $j2 .= 'c="'.$this->roomID.'" ';
+            $j2 .= 'r="130007525" ';
+            $j2 .= 'f="'.'2" ';
+            $j2 .= 'u="'.$i['i'].'" ';
+            for ($c = 0;$c < 15;++$c) {
+                if ($c == 1) {
+                    continue;
+                } elseif (isset($i['d'.$c])) {
+                    $j2 .= 'd'.$c.'="'.$i['d'.$c].'" ';
+                }
+            }
+            if (isset($i['sn'])) {
+                $j2 .= 'sn="'.$i['sn'].'" ';
+            }
+            if (isset($i['dx'])) {
+                $j2 .= 'dx="'.$i['dx'].'" ';
+            } else {
+                $i['dx'] = '';
+            }
+            $j2 .= 'dt="'.$i['dt'].'" ';
+            $j2 .= 'N="'.$i['n'].'" ';
+            $this->botInfo['name'] = str_replace('"', '\'\'', $this->botInfo['name']);
+            $this->botInfo['avatar'] = str_replace('"', '\'\'', $this->botInfo['avatar']);
+            $j2 .= 'n="'.$this->botInfo['name'].'" ';
+            $j2 .= 'a="'.$this->botInfo['avatar'].'" ';
+            $j2 .= 'h="'.$this->botInfo['home'].'" ';
+            $j2 .= 'v="0" ';
+            $j2 = trim($j2);
+            $j2 = '<j2 '.$j2.' />';
+            $this->send($j2);
+        } else {
+            die('Could not login.');
+        }
+    }
+    public function handle($type, $msg)
+    {
+        switch ($type) {
+            case 'u':
+                $this->users[$this->parseU($msg['u'])] = $msg;
+            break;
+            case 'q':
+                $this->connect($this->packet['q']['d'], $this->packet['q']['p']);
+                $this->join();
+            break;
+            case 'done':
+                $this->done = true;
+                if (isset($this->reconnected) && $this->reconnected == true) {
+                    echo 'Recovered';
+                    $this->reconnected = false;
+                }
+            break;
+            case 'm':
+            case 'p':
+                if (isset($msg['i']) && $msg['i'] > 0) {
+                    break;
+                }
+                if (!$this->done) {
+                    break;
+                }
+                $mess = $message = explode(' ', $msg['t']);
+                unset($mess[0]);
+                $mess = implode(' ', $mess);
+                if (isset($messsage[0][0]) && $message[0][0] != '!') {
+                    break;
+                }
+                switch (substr($message[0], 1)) {
+                    case 'say':
+                    case 'Say':                                                            #Say Command
+                        $this->sendMessage($mess);
+                    break;
+                    case 'restart':
+                        $this->sendMessage("Ill Be Back");
+                        $this->disconnect();
+                        $this->join();
+                        $this->sendMessage("Back (hehe)");
+                    break;
+                    case 'youtube':
+                        $response = json_decode(file_get_contents('https://www.googleapis.com/youtube/v3/search?part=snippet&q='.urlencode($mess).'&key=AIzaSyBwBs83XSWHOlxIKrf7VvaE-AbIl_zqIbw&type=video&maxResults=3'),true);
+                        foreach($response['items'] as $result){
+                            $this->sendMessage($result['snippet']['title'].' - http://youtube.com/watch?v='.$result['id']['videoId']);
+                            sleep(1);
+                        }
+                        break;
+                    case 'info':  
+                    case 'Info':        
+                        $this->sendMessage("Hello! Im a bot coded by lockie9999 (bot1)");
+                    break;
+                    case 'smileys':
+                    case 'Smileys':
+                        $power = $message[1];
+                        $json = json_decode(file_get_contents('http://api.illuxat.com/powerApi.php?power='.$power));
+                        if (!$json) {
+                            return print 'Power Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('[Power ID: '.$json->ID.'] '.ucfirst($json->Power).' Smileys : '.
+                            $json->Smileys.'');
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'cmds':
+                    case 'Cmds':
+                    case 'Commands':
+                    case 'commands':
+                        $json = json_decode(file_get_contents('http://45.55.130.40/Api/commands.json'));
+                        if (!$json) {
+                            return print 'Error Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Commands: '.$json->Commands.' '.
+                            $json->XatTradeXats.''.$json->XatTradeDays.'');
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'chatprice':
+                        $Chat = $message[1];
+                        $json = json_decode(file_get_contents('http://api.andbots.org/chatprice.php?name='.$Chat));
+                        if (!$json) {
+                            return print 'ChatPrice Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Chats Price : '.$json->price.' '.ucfirst($json->Power).''.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'id':
+                    case 'ID':
+                    case 'Id':
+                        $Reg = $message[1];
+                        $json = json_decode(file_get_contents('http://api.andbots.org/user2id.php?reg='.$Reg));
+                        if (!$json) {
+                            return print 'Reg Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Users ID: '.$json->reg.' '.ucfirst($json->Power).''.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'sn':
+                    case 'SN':
+                    case 'shortname':
+                    case 'Shortname':
+                        $SN = $message[1];
+                        $json = json_decode(file_get_contents('http://api.andbots.org/shortprice.php?name='.$SN));
+                        if (!$json) {
+                            return print 'Reg Command Down';
+                            $this->sendMessage("Broke");
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Shortname Costs : '.$json->price.' '.ucfirst($json->Power).''.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'chatid':
+                        $Chat = $message[1];
+                        $json = json_decode(file_get_contents('http://api.andbots.org/chatinfo.php?name='.$Chat));
+                        if (!$json) {
+                            return print 'ChatID Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Chat ID: '.$json->chatid.' '.ucfirst($json->Power).''.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'reg':
+                    case 'Reg':
+                        $ID = $message[1];
+                        $json = json_decode(file_get_contents('http://api.andbots.org/id2user.php?id='.$ID));
+                        if (!$json) {
+                            return print 'Reg Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('Users Reg Name: '.$json->reg.' '.ucfirst($json->Power).''.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'store':
+                    case 'Store':
+                        $power = $message[1];
+                        $json = json_decode(file_get_contents('http://api.illuxat.com/powerApi.php?power='.$power));
+                        if (!$json) {
+                            return print 'Power Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('[Power ID: '.$json->ID.'] '.ucfirst($json->Power).' Store Price : '.
+                            $json->XatStore);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                    case 'price':
+                    case 'Price':
+                        $power = $message[1];
+                        $json = json_decode(file_get_contents('http://api.illuxat.com/powerApi.php?power='.$power));
+                        if (!$json) {
+                            return print 'Power Command Down';
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('[Power ID: '.$json->ID.'] '.ucfirst($json->Power).' costs '.
+                            $json->XatTradeXats.' Xats or '.$json->XatTradeDays.' Days ');
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                        case 'latestpower':
+                        case 'Latestpower':
+                        case 'Latest':
+                        case 'latest':
+                        $json = json_decode(file_get_contents('http://api.illuxat.com/latestpower.php'));
+                        if (!$json) {
+                            return $this->sendMessage('Latest Command Down');
+                        }
+                        if (!isset($json->error)) {
+                            $this->sendMessage('[Power ID: '.$json->ID.'] '.ucfirst($json->Name).' | Store Price: '.$json->XatStore.' | '.$json->Description);
+                        } else {
+                            $this->sendMessage("_$message[0]: ".$json->error);
+                        }
+                        break;
+                        case 'clear':
+                        $this->sendMessage("Chat cleared... Please Refresh");
+                        for($i = 1; $i < 25; $i++){
+                            $this->sendMessage('/d'.$x);
+                            $x++;
+                            sleep(0.5);
+                        }
+                    break;
+
+                }
+            break;
+            case 'z':
+                if (substr($msg['t'], 0, 2) == '/l') {
+                    $this->send('<z d="'.$this->parseU($msg['u']).'" u="'.$this->BotID.'" t="/a_NF" />');
+                }
+                break;
+
+        }
+    }
+    public function read($parse = true, $handle = true)
+    {
+        $res = '';
+        try {
+            $res = @rtrim(socket_read($this->soc, 2048));
+            $res = str_replace('', '', $res);
+        } catch (Exception $e) {
+            return 'DIED';
+        }
+        if (!$res) {
+            return 'DIED';
+        }
+        if ($res[strlen($res) - 1] != '>') {
+            $res .= $this->read(true);
+        }
+        if ($parse) {
+            $this->parse($res, $handle);
+        }
+
+        return $res;
+    }
+    public function send($data)
+    {
+        if ($data[strlen($data) - 1] != chr(0)) {
+            $data .= chr(0);
+        }
+        echo '[Message Sent] '.$data."\n";
+
+        return socket_write($this->soc, $data, strlen($data));
+    }
+    public function parse($packet, $handle = true)
+    {
+        $packet = explode('/>', $packet);
+        $this->packers = array();
+        foreach ((Array) $packet as $p) {
+            $p = trim($p);
+            $p = str_replace('', '', $p);
+            if (!empty($p)) {
+                $last3 = substr(str_replace(chr(0), '', $p), (strlen($p) - 3));
+                if ($last3 != ' />') {
+                    $p .= ' />';
+                }
+                echo '[RECV] '.html_entity_decode($p)."\n";
+                $this->packers[] = $p;
+            }
+            if (strlen($p) < 5) {
+                return;
+            }
+            if ($p{0} != '<') {
+                $this->packers[count($this->packers) - 2] = $this->packers[count($this->packers) - 2].' ';
+                $x = strrev($this->packers[count($this->packers) - 2]);
+                if ($x{0} == '"') {
+                    $p = trim($this->packers[count($this->packers) - 2]).''.$p.' ';
+                } else {
+                    $p = trim($this->packers[count($this->packers) - 2]).''.$p;
+                }
+            }
+            $p = str_replace('/>', '', $p);
+            $p = $p.'/>';
+            $pack = $this->parse2($p);
+            $type = $pack['type'];
+            foreach ($pack as $k => $v) {
+                $pack[$k] = $v;
+            }
+            $this->packet[$type] = $pack;
+            if ($handle) {
+                $this->handle($type, $pack);
+            } else {
+                return $pack;
+            }
+        }
+
+        return $pack;
+    }
+
+    public function xml($xml)
+    {
+        $array = json_decode(json_encode($xml), true);
+        foreach ((Array) @array_slice($array, 0) as $key => $value) {
+            if (is_array(@$value)) {
+                $array[$key] = $this->xml($value);
+            }
+        }
+
+        return $array;
+    }
+    public function parse2($p)
+    {
+        global $base;
+        $p1 = $p;
+        $p = trim($p, '<');
+        $p1 = trim($p, '<');
+        $p1 = '<'.$p1;
+        $p = explode('/>', $p);
+        $p = $p[0];
+        $x = explode(' ', $p);
+        $type = $x[0];
+        $packet['type'] = $type;
+        $xml = @simplexml_load_string($p1);
+        $x = $this->xml($xml);
+        $attributes = @$x['@attributes'];
+        foreach ((Array) $attributes as $type => $var) {
+            $packet[$type] = $var;
+        }
+
+        return $packet;
+    }
+    public function sendMessage($msg)
+    {
+        if (empty($msg)) {
+            return false;
+        }
+        $this->send('<m t="'.$msg.'" u="'.$this->loginInfo['i'].'" />');
+    }
+}
